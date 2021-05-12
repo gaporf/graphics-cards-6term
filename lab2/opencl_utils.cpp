@@ -12,12 +12,11 @@
 size_t const LOCAL_SIZE = 16;
 size_t const VECTOR_SIZE = 2;
 
-
 void multiply(uint32_t device_num, char implement_num, char const* output_file, size_t const& N, size_t const& K, size_t const& M, std::vector<float>& first_matrix, std::vector<float>& second_matrix) {
 	auto t_start = std::chrono::high_resolution_clock::now();
-	size_t NN = (N % LOCAL_SIZE == 0 ? N : (N / LOCAL_SIZE + 1) * LOCAL_SIZE);
-	size_t MM = (M % LOCAL_SIZE == 0 ? M : (M / LOCAL_SIZE + 1) * LOCAL_SIZE);
-	size_t KK = (K % LOCAL_SIZE == 0 ? K : (K / LOCAL_SIZE + 1) * LOCAL_SIZE);
+	unsigned long long NN = (N % LOCAL_SIZE == 0 ? N : (N / LOCAL_SIZE + 1) * LOCAL_SIZE);
+	unsigned long long MM = (M % LOCAL_SIZE == 0 ? M : (M / LOCAL_SIZE + 1) * LOCAL_SIZE);
+	unsigned long long KK = (K % LOCAL_SIZE == 0 ? K : (K / LOCAL_SIZE + 1) * LOCAL_SIZE);
 	if (implement_num == '3') {
 		NN = (NN % (LOCAL_SIZE * VECTOR_SIZE) == 0 ? NN : (NN / (LOCAL_SIZE * VECTOR_SIZE) + 1) * (LOCAL_SIZE * VECTOR_SIZE));
 	}
@@ -36,8 +35,7 @@ void multiply(uint32_t device_num, char implement_num, char const* output_file, 
 		for (size_t j = 0; j < NN; j++) {
 			if (i < K && j < N) {
 				new_second_matrix[i * NN + j] = second_matrix[i * N + j];
-			}
-			else {
+			} else {
 				new_second_matrix[i * NN + j] = 0;
 			}
 		}
@@ -58,8 +56,19 @@ void multiply(uint32_t device_num, char implement_num, char const* output_file, 
 	uint32_t num_of_devices = 0;
 	for (auto i = 0; i < n; i++) {
 		cl_uint m;
-		error = clGetDeviceIDs(platforms[i], CL_DEVICE_TYPE_ALL, 0, nullptr, &m);
-		if (error != CL_SUCCESS) throw std::runtime_error("Could not get device ids");
+		error = clGetDeviceIDs(platforms[i], CL_DEVICE_TYPE_GPU, 0, nullptr, &m);
+		if (error == CL_DEVICE_NOT_FOUND) {
+			m = 0;
+		} else if (error != CL_SUCCESS) {
+			throw std::runtime_error("Could not get device ids");
+		}
+		num_of_devices += m;
+		error = clGetDeviceIDs(platforms[i], CL_DEVICE_TYPE_CPU, 0, nullptr, &m);
+		if (error == CL_DEVICE_NOT_FOUND) {
+			m = 0;
+		} else if (error != CL_SUCCESS) {
+			throw std::runtime_error("Could not get device ids");
+		}
 		num_of_devices += m;
 	}
 	if (device_num >= num_of_devices) device_num = 0;
@@ -79,18 +88,23 @@ void multiply(uint32_t device_num, char implement_num, char const* output_file, 
 		for (auto j = 0; j < m; j++) {
 			size_t k;
 			clGetDeviceInfo(devices[j], CL_DEVICE_HOST_UNIFIED_MEMORY, 0, nullptr, &k);
-			std::unique_ptr<char[]> type(new char[k]);
+			std::unique_ptr<char[]> type;
+			try {
+				type = std::unique_ptr<char[]>(new char[k]);
+			} catch (...) {
+				throw std::runtime_error("Could not allocate memory");
+			}
 			clGetDeviceInfo(devices[j], CL_DEVICE_HOST_UNIFIED_MEMORY, k, type.get(), nullptr);
 			if (*reinterpret_cast<cl_bool*>(type.get()) == CL_FALSE) {
 				if (device_num == 0) {
 					device = devices[j];
 					break;
-				}
-				else {
+				} else {
 					device_num--;
 				}
 			}
 		}
+		if (device != nullptr) break;
 	}
 	if (device == nullptr) {
 		for (auto i = 0; i < n; i++) {
@@ -109,18 +123,23 @@ void multiply(uint32_t device_num, char implement_num, char const* output_file, 
 			for (auto j = 0; j < m; j++) {
 				size_t k;
 				clGetDeviceInfo(devices[j], CL_DEVICE_HOST_UNIFIED_MEMORY, 0, nullptr, &k);
-				std::unique_ptr<char[]> type(new char[k]);
+				std::unique_ptr<char[]> type;
+				try {
+					type = std::unique_ptr<char[]>(new char[k]);
+				} catch (...) {
+					throw std::runtime_error("Could not allocate memory");
+				}
 				clGetDeviceInfo(devices[j], CL_DEVICE_HOST_UNIFIED_MEMORY, k, type.get(), nullptr);
 				if (*reinterpret_cast<cl_bool*>(type.get()) == CL_TRUE) {
 					if (device_num == 0) {
 						device = devices[j];
 						break;
-					}
-					else {
+					} else {
 						device_num--;
 					}
 				}
 			}
+			if (device != nullptr) break;
 		}
 	}
 	if (device == nullptr) {
@@ -145,6 +164,7 @@ void multiply(uint32_t device_num, char implement_num, char const* output_file, 
 					device_num--;
 				}
 			}
+			if (device != nullptr) break;
 		}
 	}
 	if (device == nullptr) throw std::runtime_error("Could not find device");
@@ -178,48 +198,46 @@ void multiply(uint32_t device_num, char implement_num, char const* output_file, 
 	if (error != CL_SUCCESS) throw std::runtime_error("Could not create command queue");
 	std::string code_program;
 	if (implement_num == '1') {
-		code_program += "kernel void sum(global const float *at, global const float *b, global float *c, int const N, int const K, int const M) {\n";
-		code_program += "    uint x = get_global_id(0);\n";
-		code_program += "    uint y = get_global_id(1);\n";
+		code_program += "kernel void sum(global const float *at, global const float *b, global float *c, ulong const N, ulong const K, ulong const M) {\n";
+		code_program += "    ulong x = get_global_id(0);\n";
+		code_program += "    ulong y = get_global_id(1);\n";
 		code_program += "    c[y * N + x] = 0;\n";
-		code_program += "    for (int i = 0; i < K; i++) {\n";
+		code_program += "    for (uint i = 0; i < K; i++) {\n";
 		code_program += "        c[y * N + x] += at[i * M + y] * b[i * N + x];\n";
 		code_program += "    }\n";
 		code_program += "}\n";
-	}
-	else if (implement_num == '2') {
-		code_program += "kernel void sum(global const float *at, global const float *b, global float *c, int const N, int const K, int const M) {\n";
+	} else if (implement_num == '2') {
+		code_program += "kernel void sum(global const float *at, global const float *b, global float *c, ulong const N, ulong const K, ulong const M) {\n";
 		code_program += "    local float first_arr[" + std::to_string(LOCAL_SIZE) + "][" + std::to_string(LOCAL_SIZE) + "];\n";
 		code_program += "    local float second_arr[" + std::to_string(LOCAL_SIZE) + "][" + std::to_string(LOCAL_SIZE) + "];\n";
-		code_program += "    uint x = get_global_id(0);\n";
-		code_program += "    uint x_local = get_local_id(0);\n";
-		code_program += "    uint y = get_global_id(1);\n";
-		code_program += "    uint y_local = get_local_id(1);\n";
+		code_program += "    ulong x = get_global_id(0);\n";
+		code_program += "    ulong x_local = get_local_id(0);\n";
+		code_program += "    ulong y = get_global_id(1);\n";
+		code_program += "    ulong y_local = get_local_id(1);\n";
 		code_program += "    c[y * N + x] = 0;\n";
-		code_program += "    for (int i = 0; i < K; i += " + std::to_string(LOCAL_SIZE) + ") {\n";
+		code_program += "    for (ulong i = 0; i < K; i += " + std::to_string(LOCAL_SIZE) + ") {\n";
 		code_program += "        first_arr[y_local][x_local] = at[(i + x_local) * M + y];\n";
 		code_program += "        second_arr[y_local][x_local] = b[(i + y_local) * N + x];\n";
 		code_program += "        barrier(CLK_LOCAL_MEM_FENCE);\n";
-		code_program += "        for (int uu = 0; uu < " + std::to_string(LOCAL_SIZE) + "; uu++) {\n";
+		code_program += "        for (ulong uu = 0; uu < " + std::to_string(LOCAL_SIZE) + "; uu++) {\n";
 		code_program += "            c[y * N + x] += first_arr[y_local][uu] * second_arr[uu][x_local];\n";
 		code_program += "        }\n";
 		code_program += "    }\n";
 		code_program += "}\n";
-	}
-	else {
-		code_program += "kernel void sum(global const float *at, global const float *b, global float *c, int const N, int const K, int const M) {\n";
+	} else {
+		code_program += "kernel void sum(global const float *at, global const float *b, global float *c, ulong const N, ulong const K, ulong const M) {\n";
 		code_program += "    local float first_arr[" + std::to_string(LOCAL_SIZE) + "][" + std::to_string(LOCAL_SIZE) + "];\n";
 		code_program += "    local float" + std::to_string(VECTOR_SIZE) + " second_arr[" + std::to_string(LOCAL_SIZE) + "][" + std::to_string(LOCAL_SIZE) + "];\n";
-		code_program += "    uint x = get_global_id(0);\n";
-		code_program += "    uint x_local = get_local_id(0);\n";
-		code_program += "    uint y = get_global_id(1);\n";
-		code_program += "    uint y_local = get_local_id(1);\n";
+		code_program += "    ulong x = get_global_id(0);\n";
+		code_program += "    ulong x_local = get_local_id(0);\n";
+		code_program += "    ulong y = get_global_id(1);\n";
+		code_program += "    ulong y_local = get_local_id(1);\n";
 		code_program += "    float" + std::to_string(VECTOR_SIZE) + " ans = 0;\n";
-		code_program += "    for (int i = 0; i < K; i += " + std::to_string(LOCAL_SIZE) + ") {\n";
+		code_program += "    for (ulong i = 0; i < K; i += " + std::to_string(LOCAL_SIZE) + ") {\n";
 		code_program += "        first_arr[y_local][x_local] = at[(i + x_local) * M + y];\n";
 		code_program += "        second_arr[y_local][x_local] = vload" + std::to_string(VECTOR_SIZE) + "(0, &b[(i + y_local) * N + " + std::to_string(VECTOR_SIZE) + " * x]);\n";
 		code_program += "        barrier(CLK_LOCAL_MEM_FENCE);\n";
-		code_program += "        for (int uu = 0; uu < " + std::to_string(LOCAL_SIZE) + "; uu++) {\n";
+		code_program += "        for (ulong uu = 0; uu < " + std::to_string(LOCAL_SIZE) + "; uu++) {\n";
 		code_program += "            ans += first_arr[y_local][uu] * second_arr[uu][x_local];\n";
 		code_program += "        }\n";
 		code_program += "    }\n";
@@ -257,17 +275,17 @@ void multiply(uint32_t device_num, char implement_num, char const* output_file, 
 	if (error != CL_SUCCESS) throw std::runtime_error("Could not write buffer b");
 	cl_mem buffer_c = clCreateBuffer(context, CL_MEM_READ_WRITE, MM * NN * 4, nullptr, &error);
 	if (error != CL_SUCCESS) throw std::runtime_error("Could not create buffer c");
-	error = clSetKernelArg(kernel, 0, 8, &buffer_a);
+	error = clSetKernelArg(kernel, 0, sizeof(cl_mem), &buffer_a);
 	if (error != CL_SUCCESS) throw std::runtime_error("Could not set first argument");
-	error = clSetKernelArg(kernel, 1, 8, &buffer_b);
+	error = clSetKernelArg(kernel, 1, sizeof(cl_mem), &buffer_b);
 	if (error != CL_SUCCESS) throw std::runtime_error("Could not set second argument");
-	error = clSetKernelArg(kernel, 2, 8, &buffer_c);
+	error = clSetKernelArg(kernel, 2, sizeof(cl_mem), &buffer_c);
 	if (error != CL_SUCCESS) throw std::runtime_error("Could not set third argument");
-	error = clSetKernelArg(kernel, 3, 4, &NN);
+	error = clSetKernelArg(kernel, 3, sizeof(unsigned long long), &NN);
 	if (error != CL_SUCCESS) throw std::runtime_error("Could not set fourth argument");
-	error = clSetKernelArg(kernel, 4, 4, &KK);
+	error = clSetKernelArg(kernel, 4, sizeof(unsigned long long), &KK);
 	if (error != CL_SUCCESS) throw std::runtime_error("Could not set fifth argument");
-	error = clSetKernelArg(kernel, 5, 4, &MM);
+	error = clSetKernelArg(kernel, 5, sizeof(unsigned long long), &MM);
 	if (error != CL_SUCCESS) throw std::runtime_error("Could not set sixth argument");
 	size_t const dim[2] = { (implement_num == '3' ? NN / VECTOR_SIZE : NN), MM };
 	size_t const local_size[2] = { LOCAL_SIZE, LOCAL_SIZE };
@@ -295,5 +313,5 @@ void multiply(uint32_t device_num, char implement_num, char const* output_file, 
 	cl_ulong start_time, finish_time;
 	clGetEventProfilingInfo(event, CL_PROFILING_COMMAND_START, sizeof(cl_ulong), &start_time, nullptr);
 	clGetEventProfilingInfo(event, CL_PROFILING_COMMAND_END, sizeof(cl_ulong), &finish_time, nullptr);
-	std::cout << "\nTime: " << (finish_time - start_time) / 1'000'000 << "\t" << std::chrono::duration<double, std::milli>(t_end - t_start).count() << "\n";
+	std::cout << "\nTime: " << static_cast<double>(finish_time - start_time) / 1'000'000 << "\t" << std::chrono::duration<double, std::milli>(t_end - t_start).count() << "\n";
 }
