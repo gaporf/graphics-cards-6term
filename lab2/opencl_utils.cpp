@@ -281,11 +281,11 @@ void multiply(uint32_t device_num, char implement_num, char const* output_file, 
 	if (error != CL_SUCCESS) throw std::runtime_error("Could not set second argument");
 	error = clSetKernelArg(kernel, 2, sizeof(cl_mem), &buffer_c);
 	if (error != CL_SUCCESS) throw std::runtime_error("Could not set third argument");
-	error = clSetKernelArg(kernel, 3, sizeof(unsigned long long), &NN);
+	error = clSetKernelArg(kernel, 3, sizeof(cl_ulong), &NN);
 	if (error != CL_SUCCESS) throw std::runtime_error("Could not set fourth argument");
-	error = clSetKernelArg(kernel, 4, sizeof(unsigned long long), &KK);
+	error = clSetKernelArg(kernel, 4, sizeof(cl_ulong), &KK);
 	if (error != CL_SUCCESS) throw std::runtime_error("Could not set fifth argument");
-	error = clSetKernelArg(kernel, 5, sizeof(unsigned long long), &MM);
+	error = clSetKernelArg(kernel, 5, sizeof(cl_ulong), &MM);
 	if (error != CL_SUCCESS) throw std::runtime_error("Could not set sixth argument");
 	size_t const dim[2] = { (implement_num == '3' ? NN / VECTOR_SIZE : NN), MM };
 	size_t const local_size[2] = { LOCAL_SIZE, LOCAL_SIZE };
