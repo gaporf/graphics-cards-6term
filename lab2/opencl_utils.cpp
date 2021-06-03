@@ -14,9 +14,9 @@ size_t const VECTOR_SIZE = 2;
 
 void multiply(uint32_t device_num, char implement_num, char const* output_file, size_t const& N, size_t const& K, size_t const& M, std::vector<float>& first_matrix, std::vector<float>& second_matrix) {
 	auto t_start = std::chrono::high_resolution_clock::now();
-	unsigned long long NN = (N % LOCAL_SIZE == 0 ? N : (N / LOCAL_SIZE + 1) * LOCAL_SIZE);
-	unsigned long long MM = (M % LOCAL_SIZE == 0 ? M : (M / LOCAL_SIZE + 1) * LOCAL_SIZE);
-	unsigned long long KK = (K % LOCAL_SIZE == 0 ? K : (K / LOCAL_SIZE + 1) * LOCAL_SIZE);
+	unsigned long long NN = (N % (2 * LOCAL_SIZE) == 0 ? N : (N / (2 * LOCAL_SIZE) + 1) * 2 * LOCAL_SIZE);
+	unsigned long long MM = (M % (2 * LOCAL_SIZE) == 0 ? M : (M / (2 * LOCAL_SIZE) + 1) * 2 * LOCAL_SIZE);
+	unsigned long long KK = (K % (2 * LOCAL_SIZE) == 0 ? K : (K / (2 * LOCAL_SIZE) + 1) * 2 * LOCAL_SIZE);
 	if (implement_num == '3') {
 		NN = (NN % (LOCAL_SIZE * VECTOR_SIZE) == 0 ? NN : (NN / (LOCAL_SIZE * VECTOR_SIZE) + 1) * (LOCAL_SIZE * VECTOR_SIZE));
 	}
@@ -202,8 +202,11 @@ void multiply(uint32_t device_num, char implement_num, char const* output_file, 
 		code_program += "    ulong x = get_global_id(0);\n";
 		code_program += "    ulong y = get_global_id(1);\n";
 		code_program += "    c[y * N + x] = 0;\n";
-		code_program += "    for (uint i = 0; i < K; i++) {\n";
-		code_program += "        c[y * N + x] += at[i * M + y] * b[i * N + x];\n";
+		code_program += "    for (uint i = 0; i < K; i += 4) {\n";
+		code_program += "        c[y * N + x] += at[i * M + y] * b[i * N + x]\n";
+		code_program += "                      + at[(i + 1) * M + y] * b[(i + 1) * N + x]\n";
+		code_program += "                      + at[(i + 2) * M + y] * b[(i + 2) * N + x]\n";
+		code_program += "                      + at[(i + 3) * M + y] * b[(i + 3) * N + x];\n";
 		code_program += "    }\n";
 		code_program += "}\n";
 	} else if (implement_num == '2') {
